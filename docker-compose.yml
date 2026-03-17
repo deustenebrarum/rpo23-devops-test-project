@@ -1,0 +1,35 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: todoapp-db
+    environment:
+      POSTGRES_DB: ${DB_NAME:-todoapp}
+      POSTGRES_USER: ${DB_USER:-todoapp}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-todoapp} -d ${DB_NAME:-todoapp}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build: .
+    container_name: todoapp-backend
+    ports:
+      - "5000:8080"
+    environment:
+      - ConnectionStrings__DefaultConnection=Host=db;Port=5432;Database=${DB_NAME:-todoapp};Username=${DB_USER:-todoapp};Password=${DB_PASSWORD:-changeme}
+      - JwtSettings__Key=${JWT_KEY:-Minimum32CharacterSecretKeyForJWT!}
+      - JwtSettings__Issuer=${JWT_ISSUER:-TodoApp}
+      - JwtSettings__Audience=${JWT_AUDIENCE:-TodoAppUsers}
+      - JwtSettings__ExpirationInMinutes=${JWT_EXPIRATION:-60}
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
