@@ -1,0 +1,42 @@
+stages:
+  - build
+  - test
+
+variables:
+  DOTNET_SDK: "mcr.microsoft.com/dotnet/sdk:10.0"
+  NUGET_CACHE: ".nuget/packages"
+
+# Кэшируем папки NuGet, чтобы сборки летали
+cache:
+  key: ${CI_COMMIT_REF_SLUG}
+  paths:
+    - ${NUGET_CACHE}
+
+# 1. Этап сборки приложения
+build_job:
+  stage: build
+  image: $DOTNET_SDK
+  script:
+    - echo "--- Восстановление пакетов ---"
+    - dotnet restore --packages $NUGET_CACHE
+    - echo "--- Сборка проекта ---"
+    - dotnet build --no-restore -c Release
+  artifacts:
+    paths:
+      - "**/bin/Release/"
+      - "**/obj/"
+    expire_in: 1 hour
+
+# 2. Этап автоматического тестирования
+test_job:
+  stage: test
+  image: $DOTNET_SDK
+  dependencies:
+    - build_job
+  script:
+    - echo "--- Запуск тестов ---"
+    - dotnet test --no-build -c Release --logger:"junit;LogFilePath=test-results.xml"
+  artifacts:
+    when: always
+    reports:
+      junit: "**/test-results.xml"
