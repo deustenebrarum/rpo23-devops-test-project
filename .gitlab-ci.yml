@@ -1,58 +1,39 @@
 stages:
   - build
   - test
-  - publish
 
 variables:
   DOTNET_SDK_IMAGE: "mcr.microsoft.com/dotnet/sdk:10.0"
-  DOTNET_RUNTIME_IMAGE: "mcr.microsoft.com/dotnet/aspnet:10.0"
+  # Путь к кэшу NuGet для ускорения сборки
+  NUGET_PACKAGES_LOOKUP: ".nuget/packages"
 
 cache:
   key: ${CI_COMMIT_REF_SLUG}
   paths:
-    - .nuget/packages
+    - ${NUGET_PACKAGES_LOOKUP}
 
-build:
+# Этап сборки приложения
+build_job:
   stage: build
   image: $DOTNET_SDK_IMAGE
   script:
-    - dotnet restore --packages .nuget/packages
+    - dotnet restore --packages $NUGET_PACKAGES_LOOKUP
     - dotnet build --no-restore -c Release
-    # Install latest EF tool compatible with .NET 10
-    - dotnet tool install --global dotnet-ef
-    - export PATH="$PATH:$HOME/.dotnet/tools"
-    - dotnet ef migrations bundle --self-contained -r linux-x64 --project src/TodoApp.Infrastructure --startup-project src/TodoApp.Web --output scripts/EfCoreMigrationsBundle
   artifacts:
     paths:
-      - "**/bin/"
+      - "**/bin/Release/"
       - "**/obj/"
-      - "scripts/EfCoreMigrationsBundle"
     expire_in: 1 hour
 
-test:
+# Этап запуска тестов
+test_job:
   stage: test
   image: $DOTNET_SDK_IMAGE
   dependencies:
-    - build
+    - build_job
   script:
     - dotnet test --no-build -c Release --logger:"junit;LogFilePath=test-results.xml"
   artifacts:
     when: always
     reports:
       junit: "**/test-results.xml"
-
-docker-build:
-  stage: publish
-  image: docker:latest
-  services:
-    - docker:dind
-  dependencies:
-    - build
-  only:
-    - main
-    - master
-  script:
-    - echo "$CI_REGISTRY_PASSWORD" | docker login $CI_REGISTRY -u $CI_REGISTRY_USER
-    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA -t $CI_REGISTRY_IMAGE:latest -f docker/Dockerfile .
-    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_SHA
-    - docker push $CI_REGISTRY_IMAGE:latest
