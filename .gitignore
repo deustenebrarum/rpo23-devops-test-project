@@ -5,6 +5,7 @@
 
 # Migrations files
 EfCoreMigrationsBundle
+efbundle
 
 # dotenv files
 .env
