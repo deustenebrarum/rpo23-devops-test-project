@@ -19,10 +19,9 @@ RUN dotnet publish src/TodoApp.Web/TodoApp.Web.csproj -c Release -o /app/publish
 # 4. Устанавливаем инструмент миграций и собираем бандл
 RUN dotnet tool install --global dotnet-ef
 ENV PATH="$PATH:/root/.dotnet/tools"
-RUN dotnet ef migrations bundle --self-contained -r linux-x64 \
-    --project src/TodoApp.Infrastructure \
-    --startup-project src/TodoApp.Web \
-    --output /app/EfCoreMigrationsBundle
+COPY ./scripts/make-migration-bundle.sh ./scripts/
+RUN chmod +x ./scripts/make-migration-bundle.sh
+RUN /bin/sh ./scripts/make-migration-bundle.sh
 
 # Этап запуска (Runtime)
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
@@ -37,7 +36,7 @@ COPY --from=builder /app/EfCoreMigrationsBundle .
 COPY scripts/apply-migrations.sh .
 
 # Исправляем права и окончания строк
-RUN dos2unix apply-migrations.sh && chmod +x apply-migrations.sh EfCoreMigrationsBundle
+RUN chmod +x apply-migrations.sh EfCoreMigrationsBundle
 
 EXPOSE 8080
 
