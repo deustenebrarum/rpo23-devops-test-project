@@ -21,18 +21,15 @@ RUN dotnet tool install --global dotnet-ef
 ENV PATH="$PATH:/root/.dotnet/tools"
 COPY ./scripts/make-migration-bundle.sh ./scripts/
 RUN chmod +x ./scripts/make-migration-bundle.sh
-RUN /bin/sh ./scripts/make-migration-bundle.sh
+RUN ./scripts/make-migration-bundle.sh
 
 # Этап запуска (Runtime)
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
 WORKDIR /app
 
-# Устанавливаем утилиту для исправления окончаний строк (на случай Windows)
-RUN apt-get update && apt-get install -y dos2unix && rm -rf /var/lib/apt/lists/*
-
 # Копируем всё необходимое из билдера
 COPY --from=builder /app/publish .
-COPY --from=builder /app/EfCoreMigrationsBundle .
+COPY --from=builder /app/scripts/EfCoreMigrationsBundle .
 COPY scripts/apply-migrations.sh .
 
 # Исправляем права и окончания строк
