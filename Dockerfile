@@ -29,7 +29,7 @@ WORKDIR /app
 
 # Копируем всё необходимое из билдера
 COPY --from=builder /app/publish .
-COPY --from=builder /app/scripts/EfCoreMigrationsBundle .
+COPY --from=builder /source/scripts/EfCoreMigrationsBundle .
 COPY scripts/apply-migrations.sh .
 
 # Исправляем права и окончания строк
