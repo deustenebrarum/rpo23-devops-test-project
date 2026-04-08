@@ -14,14 +14,12 @@ RUN dotnet restore src/TodoApp.Web/TodoApp.Web.csproj
 
 # 3. Копируем весь код и компилируем
 COPY src/ ./src/
-RUN dotnet publish src/TodoApp.Web/TodoApp.Web.csproj -c Release -o /app/publish --no-restore
-
-# 4. Устанавливаем инструмент миграций и собираем бандл
-RUN dotnet tool install --global dotnet-ef
+RUN dotnet publish src/TodoApp.Web/TodoApp.Web.csproj -c Release -o /app/publish --no-restore && \
+  dotnet tool install --global dotnet-ef
 ENV PATH="$PATH:/root/.dotnet/tools"
 COPY ./scripts/make-migration-bundle.sh ./scripts/
-RUN chmod +x ./scripts/make-migration-bundle.sh
-RUN ./scripts/make-migration-bundle.sh
+RUN chmod +x ./scripts/make-migration-bundle.sh && \
+  ./scripts/make-migration-bundle.sh
 
 # Этап запуска (Runtime)
 FROM mcr.microsoft.com/dotnet/aspnet:10.0
