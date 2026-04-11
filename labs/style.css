@@ -1,0 +1,137 @@
+/* Базовые переменные для темной темы и оранжевого акцента */
+:root {
+  --bg-outer: #121212;
+  --bg-inner: #1e1e1e;
+  --text-main: #e0e0e0;
+  --text-muted: #aaaaaa;
+  --accent-color: #ff8c00; /* Темно-оранжевый */
+  --code-bg: #2d2d2d;
+}
+
+body {
+  margin: 0;
+  padding: 40px 20px;
+  background-color: var(--bg-outer);
+  color: var(--text-main);
+  font-family: "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.6;
+}
+
+/* Контейнер, имитирующий лист документа */
+.document-container {
+  max-width: 850px;
+  margin: 0 auto;
+  background-color: var(--bg-inner);
+  padding: 50px 60px;
+  border-radius: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+}
+
+h1 {
+  color: var(--accent-color);
+  font-size: 2.2em;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  border-bottom: 2px solid var(--accent-color);
+  padding-bottom: 15px;
+  margin-top: 0;
+  margin-bottom: 40px;
+}
+
+h2 {
+  color: var(--accent-color);
+  font-size: 1.4em;
+  margin-top: 45px;
+  margin-bottom: 15px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+p {
+  margin-bottom: 15px;
+  font-size: 1.05em;
+}
+
+ul,
+ol {
+  margin-bottom: 20px;
+  padding-left: 25px;
+}
+
+li {
+  margin-bottom: 10px;
+  font-size: 1.05em;
+}
+
+/* Выделение имен файлов, свойств и мелкого кода в тексте */
+code {
+  background-color: var(--code-bg);
+  color: var(--accent-color);
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-family: "Courier New", Courier, monospace;
+  font-size: 0.95em;
+}
+
+/* Тот самый кастомный разделитель */
+hr.separator {
+  border: none;
+  height: 2px;
+  /* Градиентный оранжевый разделитель, плавно растворяющийся по краям */
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--accent-color),
+    transparent
+  );
+  margin: 50px 0;
+  opacity: 0.7;
+}
+
+/* Красивый блок для "Подсказок" или "Важно" */
+.hint {
+  background-color: rgba(255, 140, 0, 0.08);
+  border-left: 4px solid var(--accent-color);
+  padding: 15px 20px;
+  margin: 25px 0;
+  border-radius: 0 6px 6px 0;
+  color: #ffd1a3;
+}
+
+.hint strong {
+  color: var(--accent-color);
+  display: block;
+  margin-bottom: 5px;
+}
+
+/* Настройки для красивого экспорта в PDF через печать браузера */
+@media print {
+  body {
+    background-color: var(--bg-inner);
+  }
+
+  .document-container {
+    box-shadow: none;
+    max-width: 100%;
+  }
+
+  /* Принудительная печать темных фонов и оранжевых элементов */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Запрет разрыва страницы сразу после заголовка или разделителя */
+  hr.separator {
+    display: hidden;
+    page-break-after: always;
+    break-after: always;
+  }
+
+  /* Запрет разрыва внутри блока подсказки */
+  .hint {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+}

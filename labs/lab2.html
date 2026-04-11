@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Лабораторная работа №2 - GitHub Actions для TodoApp</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="document-container">
+        <h1>ГАЙД ПО МОДУЛЮ М3: GitHub Actions для TodoApp</h1>
+        
+        <p><strong>CI (Continuous Integration)</strong> — это сердце DevOps. Это процесс, который автоматически проверяет ваш код на ошибки ПРЕЖДЕ, чем он попадет в продакшн.</p>
+
+        <div class="hint">
+            <strong>ЗАЧЕМ ЭТО НУЖНО БИЗНЕСУ?</strong>
+            Автоматизация тестов в CI гарантирует, что "младший разработчик Петя" не сломает проект в пятницу вечером перед релизом. Конвейер (Workflow) просто не пропустит его код дальше, если хоть один тест завершится с ошибкой.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 1: СОЗДАНИЕ ФАЙЛА .github/workflows/ci.yml</h2>
+        <p>Это главный конфигурационный файл для GitHub Actions. GitHub ищет его строго в папке <code>.github/workflows/</code> вашего репозитория. Если он там есть — GitHub автоматически запускает <strong>Workflow</strong> (конвейер) при событиях, которые вы укажете (например, при пуше или pull request'е).</p>
+        
+        <p><strong>Что мы описываем в файле:</strong></p>
+        <ol>
+            <li><strong>Triggers (Триггеры):</strong> Указываем <code>on: [push, pull_request]</code>, чтобы пайплайн запускался при любых пушах и создании PR.</li>
+            <li><strong>Jobs (Задачи):</strong> Обычно в .NET проектах мы делаем одну задачу <code>build-and-test</code>, которая выполняется на <code>ubuntu-latest</code>.</li>
+            <li><strong>Steps (Шаги):</strong> Внутри задачи мы прописываем шаги: 
+                <ul>
+                    <li><code>actions/checkout</code> — скачивает ваш код на сервер (runner).</li>
+                    <li><code>actions/setup-dotnet</code> — устанавливает нужную версию .NET SDK.</li>
+                    <li><code>dotnet restore</code>, <code>dotnet build</code> и <code>dotnet test</code> — собирают проект и запускают тесты.</li>
+                </ul>
+            </li>
+            <li><strong>Cache (Кэш):</strong> GitHub Actions умеет кэшировать NuGet-пакеты автоматически с помощью экшена `setup-dotnet`, что ускоряет сборку в несколько раз.</li>
+        </ol>
+
+        <hr class="separator">
+
+        <h2>ШАГ 2: НАСТРОЙКА ПРАВИЛ ЗАЩИТЫ ВЕТКИ MAIN (Branch Protection Rules)</h2>
+        <p>Теперь нам нужно запретить пушить код напрямую в ветку <code>main</code> и сделать так, чтобы код мог попасть туда только через Pull Request и только если тесты прошли успешно.</p>
+        <ol>
+            <li>Зайдите в ваш репозиторий на GitHub, перейдите во вкладку <strong>Settings</strong>.</li>
+            <li>Слева в меню выберите <strong>Branches</strong> и нажмите <strong>Add branch ruleset</strong> (или Add branch protection rule).</li>
+            <li>В поле <strong>Branch name pattern</strong> введите <code>main</code>.</li>
+            <li>Поставьте галочку <strong>Require a pull request before merging</strong> (Запрещает прямой пуш, требует PR).</li>
+            <li>Поставьте галочку <strong>Require status checks to pass before merging</strong>. В появившемся поиске найдите и выберите имя вашей джобы (например, <code>build-and-test</code>). Это запретит апрувить и мержить PR, если CI упал.</li>
+            <li>Сохраните изменения (кнопка <strong>Create</strong> или <strong>Save changes</strong>).</li>
+        </ol>
+
+        <hr class="separator">
+
+        <h2>ШАГ 3: ПРАКТИЧЕСКОЕ ЗАДАНИЕ (УПАВШИЙ ТЕСТ И PULL REQUEST)</h2>
+        <p>Теперь проверим, как наша защита работает на практике. Мы создадим новую ветку, напишем заведомо <strong>неправильный</strong> тест, создадим Pull Request (который GitHub заблокирует), а затем исправим его.</p>
+
+        <ol>
+            <li><strong>Создайте новую ветку:</strong>
+<pre><code>git checkout -b feature/auth-tests</code></pre>
+            </li>
+            <li><strong>Напишите неправильный тест.</strong> Например, тест, который отправляет пустой пароль, но ожидает, что сервер вернет статус <code>OK</code>:
+<pre><code>[Fact]
+public async Task Register_ReturnsOk_WhenPasswordIsEmpty()
+{
+    // Отправляем запрос с пустым паролем
+    var response = await _client.PostAsJsonAsync("/api/v1/auth/register",
+        new RegisterRequest("test@example.com", ""));
+    
+    // НЕПРАВИЛЬНО: ожидаем OK (200), хотя сервер должен выдать ошибку
+    response.StatusCode.Should().Be(HttpStatusCode.OK);
+}</code></pre>
+            </li>
+            <li><strong>Отправьте код и создайте Pull Request:</strong>
+<pre><code>git add .
+git commit -m "test: add bad register test"
+git push origin feature/auth-tests</code></pre>
+                Зайдите на GitHub и создайте Pull Request из <code>feature/auth-tests</code> в <code>main</code>.
+            </li>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <br/>
+            <li><strong>Убедитесь, что CI упал.</strong> Зайдите в ваш PR. Вы увидите красный крестик — тесты не прошли. Кнопка <strong>Merge pull request</strong> будет заблокирована правилом, которое мы создали на Шаге 2.</li>
+            <li><strong>Исправьте тест.</strong> В коде поменяйте ожидаемый статус на правильный (например, <code>BadRequest</code>):
+<pre><code>[Fact]
+public async Task Register_ReturnsBadRequest_WhenPasswordIsEmpty()
+{
+    var response = await _client.PostAsJsonAsync(
+        "/api/v1/auth/register",
+        new RegisterRequest("test@example.com", ""));
+    
+    // ПРАВИЛЬНО: ожидаем ошибку (400 BadRequest)
+    response.StatusCode.Should().Be(HttpStatusCode.BadRequest);
+}</code></pre>
+            </li>
+            <li><strong>Отправьте исправление:</strong>
+<pre><code>git add .
+git commit -m "fix: assert correct error status for empty password"
+git push origin feature/auth-tests</code></pre>
+            </li>
+            <li>Вернитесь в Pull Request на GitHub. Дождитесь, пока CI пройдет (загорится зеленая галочка). Кнопка <strong>Merge pull request</strong> станет доступной. Нажмите её!</li>
+        </ol>
+
+        <hr class="separator">
+
+        <h2>КАК ПРОВЕРИТЬ РАБОТУ И ЧТО СДАВАТЬ?</h2>
+        
+        <ol>
+            <li>Вы можете следить за выполнением вашего CI в реальном времени. В репозитории на GitHub перейдите на вкладку <strong>Actions</strong>.</li>
+            <li>Кликните по последнему запущенному Workflow и посмотрите логи выполнения шагов (checkout, build, test).</li>
+            <li><strong>ДЛЯ СДАЧИ РАБОТЫ:</strong> Создайте текстовый файл, вставьте в него <strong>ссылку на ваш Pull Request</strong> (в котором видно историю: сначала упавший коммит, затем исправленный коммит, и успешный Merge). Отправьте этот файл в качестве ответа на задание.</li>
+        </ol>
+
+        <hr class="separator">
+
+        <h2>🔥 ЧАСТЫЕ ВОПРОСЫ И ОШИБКИ</h2>
+        
+        <ul>
+            <li><p>🔴 <strong>Workflow вообще не запустился</strong><br>
+            <em>Причина:</em> Файл лежит не по тому пути. Убедитесь, что он находится строго в <code>.github/workflows/ci.yml</code> (папка начинается с точки!).</p></li>
+            
+            <li><p>🔴 <strong>Тесты локально работают, а в GitHub Actions падают</strong><br>
+            <em>Причина:</em> Часто бывает связано с путями к файлам (Linux в GitHub Actions чувствителен к регистру в отличие от Windows) или с отсутствием переменных окружения/конфигов, которые локально у вас есть, а в репозиторий не добавлены (например, appsettings.json или строки подключения).</p></li>
+        </ul>
+
+    </div>
+</body>
+</html>

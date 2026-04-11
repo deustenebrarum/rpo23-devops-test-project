@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Лабораторная работа: Continuous Deployment (CD)</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="document-container">
+        <h1>ГАЙД ПО МОДУЛЮ М4: Continuous Deployment (CD) через GitHub Actions</h1>
+        
+        <p><strong>Цель работы:</strong> Настроить автоматическое развертывание (деплой) приложения. Теперь, когда вы делаете <code>git push</code> в ветку <code>main</code>, GitHub должен не только проверить код (CI), но и автоматически обновить работающее приложение на вашем "боевом" сервере с помощью Docker Compose.</p>
+
+        <div class="hint">
+            <strong>КАК МЫ БУДЕМ ЭТО ДЕЛАТЬ НА ЛОКАЛЬНОМ ПК?</strong>
+            В реальной жизни GitHub подключается к удаленному серверу (VPS) по SSH. Но у вашего домашнего компьютера (Windows/WSL) нет публичного IP-адреса, поэтому GitHub не может к нему "постучаться". 
+            Решение: мы установим на ваш ПК <strong>Self-Hosted Runner</strong>. Это программа-шпион, которая сама постоянно спрашивает GitHub: <em>"Для меня есть работа?"</em>. Как только появляется новый код, раннер скачивает его и выполняет команды прямо на вашем компьютере. Ваша машина станет "боевым сервером".
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 1: ПОДГОТОВКА "СЕРВЕРА" (Windows/WSL)</h2>
+        <p>Перед тем как настраивать автоматику, нужно убедиться, что окружение готово принимать приложение.</p>
+        
+        <ol>
+            <li>Откройте терминал (Ubuntu в WSL или PowerShell, в зависимости от того, где у вас установлен Docker).</li>
+            <li>Убедитесь, что Docker запущен: выполните команду <code>docker ps</code>. Если ошибок нет — сервер готов.</li>
+            <li>Остановите и удалите ваши старые локальные контейнеры проекта (если они запущены), чтобы освободить порты: <code>docker compose down</code> (выполнять в папке проекта).</li>
+        </ol>
+
+        <hr class="separator">
+
+        <h2>ШАГ 2: НАСТРОЙКА SELF-HOSTED RUNNER</h2>
+        <p>Сейчас мы привяжем ваш компьютер к репозиторию GitHub в качестве агента для выполнения пайплайнов.</p>
+        
+        <ol>
+            <li>Откройте ваш репозиторий на GitHub.</li>
+            <li>Перейдите: <strong>Settings</strong> -> <strong>Actions</strong> -> <strong>Runners</strong>.</li>
+            <li>Нажмите зеленую кнопку <strong>New self-hosted runner</strong>.</li>
+            <li>Выберите операционную систему вашего "сервера" (Windows или Linux, если используете чистый WSL для запуска).</li>
+            <li>GitHub покажет вам набор команд (в блоках Download и Configure). Откройте терминал на вашем ПК, создайте новую пустую папку (например, <code>mkdir actions-runner && cd actions-runner</code>) и по очереди скопируйте и выполните все предложенные команды.</li>
+            <li>При конфигурации (команда <code>./config.sh</code> или <code>config.cmd</code>) у вас спросят имя раннера и метки (tags). Можете просто нажимать Enter, оставив всё по умолчанию.</li>
+            <li>Выполните последнюю команду: <code>./run.sh</code> (или <code>run.cmd</code>). В терминале появится надпись <em>Connected to GitHub</em> и <em>Listening for Jobs</em>. <strong>Не закрывайте этот терминал!</strong> Ваш сервер готов к приему команд.</li>
+        </ol>
+
+        <div class="hint">
+            <strong>Как проверить результат:</strong> Вернитесь на страницу <strong>Runners</strong> в GitHub. Вы должны увидеть ваш компьютер в списке со статусом <span style="color: green;">Idle (Ожидает)</span>.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 3: СОЗДАНИЕ CD ПАЙПЛАЙНА</h2>
+        <p>Теперь нужно написать инструкцию, которую GitHub передаст вашему компьютеру при обновлении кода.</p>
+        
+        <ol>
+            <li>В вашем проекте создайте новый файл <code>.github/workflows/cd.yml</code> (отдельно от ci.yml).</li>
+            <li>Укажите триггер запуска: пайплайн должен запускаться только при пуше в ветку <code>main</code>.</li>
+            <li>Создайте job с именем <code>deploy</code>.</li>
+            <li><strong>КРИТИЧЕСКИ ВАЖНО:</strong> Укажите <code>runs-on: self-hosted</code>. Это скажет GitHub отправить задачу не на свои облачные сервера, а на ваш запущенный терминал.</li>
+        </ol>
+
+        <p><em>Каркас вашего файла:</em></p>
+<pre><code>name: Continuous Deployment
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      # Дальше напишем шаги деплоя...</code></pre>
+
+        <hr class="separator">
+
+        <h2>ШАГ 4: ШАГИ РАЗВЕРТЫВАНИЯ И СЕКРЕТЫ</h2>
+        <p>Добавьте шаги (steps) в ваш файл <code>cd.yml</code> для запуска Docker Compose. Так как это CD, нам нужно передать секреты прямо на сервер.</p>
+        
+        <ol>
+            <li><strong>Шаг генерации .env файла:</strong> В отличие от тестов, на боевом сервере контейнеры работают постоянно. Если сервер перезагрузится, Docker должен запустить базу данных с правильным паролем. Поэтому мы физически создадим файл <code>.env</code> в рабочей папке раннера перед запуском.</li>
+            <li>Используйте команду <code>echo</code> для записи секретов в файл (как мы делали в предыдущем модуле).</li>
+            <li><strong>Шаг перезапуска Compose:</strong> Напишите команду, которая остановит старые контейнеры, пересоберет образ с новым кодом и запустит в фоновом режиме. (<code>docker compose down</code>, затем <code>docker compose up -d --build</code>).</li>
+        </ol>
+
+<pre><code>      - name: Create Environment File
+        run: |
+          echo "DB_USER=${{ secrets.DB_USER }}" > .env
+          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
+          echo "DB_NAME=${{ secrets.DB_NAME }}" >> .env
+
+      - name: Deploy application
+        run: |
+          docker compose down
+          docker compose up -d --build</code></pre>
+          
+        <p><strong>Что гуглить:</strong> <code>GitHub Actions self-hosted docker compose deploy</code>.</p>
+
+        <hr class="separator">
+
+        <h2>ШАГ 5: ПОЛНАЯ ПРОВЕРКА ЦИКЛА (МАГИЯ DEVOPS)</h2>
+        <p>Пора проверить весь процесс от написания кода до его появления на сервере.</p>
+        
+        <ol>
+            <li>Убедитесь, что терминал с вашим раннером всё ещё открыт и ждет задач (Listening for jobs).</li>
+            <li>Откройте код вашего проекта (например, в контроллере или HTML файле) и сделайте видимое изменение. Измените заголовок или текст.</li>
+            <li>Сделайте коммит и пуш в ветку <code>main</code>.</li>
+            <li>Откройте GitHub -> <strong>Actions</strong>. Вы увидите, как запустился ваш CD пайплайн 
+
+
+. Посмотрите в ваш открытый терминал с раннером — там начнут бежать строки скачивания и сборки Docker!</li>
+            <li>Дождитесь зеленой галочки успешного выполнения в интерфейсе GitHub.</li>
+            <li>Откройте браузер и перейдите по адресу вашего приложения (например, <code>http://localhost:8080/swagger</code>). Вы должны увидеть ваши новые изменения. Приложение обновилось полностью автоматически!</li>
+        </ol>
+
+        <div class="hint">
+            <strong>ЧТО ПРОИЗОШЛО?</strong>
+            Вы только что построили настоящий CI/CD конвейер. Разработчик просто пишет код и делает push в ветку main. GitHub сам прячет секреты, раннер сам получает сигнал и скачивает обновления, а Docker сам пересобирает и перезапускает приложение. Добро пожаловать в DevOps!
+        </div>
+
+    </div>
+</body>
+</html>

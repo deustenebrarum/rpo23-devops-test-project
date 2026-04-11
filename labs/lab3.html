@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Лабораторная работа: GitHub Secrets</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="document-container">
+        <h1>ГАЙД ПО МОДУЛЮ М3.2: Перенос чувствительных данных в GitHub Secrets</h1>
+        
+        <p><strong>Цель работы:</strong> Научиться безопасно управлять паролями, ключами доступа и токенами (чувствительными данными). Вы удалите все секреты из исходного кода репозитория и настроите их безопасную передачу через GitHub Secrets в ваш CI/CD пайплайн (GitHub Actions).</p>
+
+        <div class="hint">
+            <strong>ПОЧЕМУ ЭТО КРИТИЧЕСКИ ВАЖНО?</strong>
+            Боты-сканеры (хакерские скрипты) просматривают публичные репозитории GitHub 24/7. Если вы случайно закоммитите файл с реальным паролем от базы данных или секретным ключом JWT, он будет скомпрометирован за несколько секунд. Пароли никогда не должны храниться в коде.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 1: АУДИТ БЕЗОПАСНОСТИ РЕПОЗИТОРИЯ</h2>
+        <p>Перед тем как использовать GitHub Secrets, нужно убедиться, что паролей больше нет в самом коде.</p>
+        
+        <ol>
+            <li>Проверьте файл <code>docker-compose.yml</code>. Если там жестко прописаны пароли (например, <code>POSTGRES_PASSWORD: mysecret</code>), замените их на переменные: <code>POSTGRES_PASSWORD: ${DB_PASSWORD}</code>.</li>
+            <li>Проверьте файлы <code>appsettings.json</code> и <code>appsettings.Development.json</code>. Убедитесь, что там лежат <strong>только примеры (заглушки)</strong>, а не реальные чувствительные данные (особенно в Connection Strings и JWT Key).</li>
+            <li><strong>Важно:</strong> Чтобы случайно не отправить локальные пароли в репозиторий при тестировании, добавьте ваши конфигурационные файлы с реальными данными (например, <code>appsettings.Development.json</code> или сам <code>appsettings.json</code>, если вы вписываете пароли прямо туда) в <code>.gitignore</code>. В репозитории должен остаться только файл-шаблон с примерами.</li>
+            <li>Убедитесь, что в <code>.gitignore</code> также добавлена строка <code>.env</code>. Ваш локальный файл с паролями никогда не должен попасть в Git.</li>
+        </ol>
+
+        <hr class="separator">
+
+        <h2>ШАГ 2: СОЗДАНИЕ СЕКРЕТОВ В GITHUB</h2>
+        <p>Теперь нам нужно передать наши пароли самому GitHub, чтобы он мог использовать их при запуске автоматических задач (Actions).</p>
+        
+        <ol>
+            <li>Откройте ваш репозиторий на сайте GitHub.</li>
+            <li>Перейдите во вкладку <strong>Settings</strong> (Настройки) в верхнем меню репозитория.</li>
+            <li>В левом боковом меню найдите раздел <strong>Security</strong>, раскройте пункт <strong>Secrets and variables</strong> и нажмите <strong>Actions</strong>.</li>
+            <li>Нажмите зеленую кнопку <strong>New repository secret</strong>.</li>
+            <li>Создайте секрет: в поле <em>Name</em> введите <code>DB_PASSWORD</code>, а в поле <em>Secret</em> — ваш реальный пароль от базы данных. Нажмите Add secret.</li>
+            <li>Повторите процесс для других важных данных, например: <code>JWT_SECRET_KEY</code>, <code>DB_USER</code>.</li>
+        </ol>
+        
+        <p><strong>Что гуглить:</strong> <code>How to create encrypted secrets GitHub Actions</code>.</p>
+
+        <hr class="separator">
+
+        <h2>ШАГ 3: ИСПОЛЬЗОВАНИЕ СЕКРЕТОВ В ПАЙПЛАЙНЕ (GITHUB ACTIONS)</h2>
+        <p>Секреты созданы, но пайплайн о них не знает. Нам нужно явно передать их в шаги сборки или тестирования.</p>
+        
+        <ol>
+            <li>Откройте файл вашего пайплайна (обычно это <code>.github/workflows/main.yml</code>).</li>
+            <li>Найдите задачу (job), которой нужен доступ к базе данных или секретам (например, шаг с <code>dotnet test</code>).</li>
+            <li>Внутри шага (step) добавьте блок <code>env:</code> и передайте секрет, используя специальный синтаксис GitHub: <code>${{ secrets.ИМЯ_СЕКРЕТА }}</code>.</li>
+        </ol>
+
+        <p><em>Пример:</em></p>
+<pre><code>steps:
+  - name: Run Tests
+    run: dotnet test
+    env:
+      JWT_SECRET: ${{ secrets.JWT_SECRET_KEY }}</code></pre>
+
+        <hr class="separator">
+
+        <h2>ШАГ 4: ПЕРЕДАЧА СЕКРЕТОВ В DOCKER COMPOSE</h2>
+        <p>Если в вашем пайплайне вы поднимаете инфраструктуру через <code>docker compose up</code> (например, для интеграционных тестов), вам <strong>не нужно</strong> физически создавать файл <code>.env</code>. Docker Compose автоматически подхватывает переменные из окружения системы (environment variables), в которой он запускается.</p>
+        
+        <ol>
+            <li>Найдите в файле пайплайна шаг, где вы запускаете <code>docker compose</code>.</li>
+            <li>Просто добавьте к этому шагу блок <code>env:</code> и замапьте (свяжите) ваши GitHub Secrets с именами переменных, которые ожидает <code>docker-compose.yml</code>.</li>
+        </ol>
+
+        <p><em>Пример передачи переменных в Compose:</em></p>
+<pre><code>steps:
+  - name: Run Docker Compose
+    run: docker compose up -d
+    env:
+      DB_USER: ${{ secrets.DB_USER }}
+      DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+      DB_NAME: ${{ secrets.DB_NAME }}</code></pre>
+        
+        <div class="hint">
+            <strong>Как это работает:</strong> Когда GitHub Actions доходит до этого шага, он распаковывает секреты и кладет их в среду выполнения (OS environment) на время выполнения команды <code>docker compose up</code>. Compose видит в своем конфиге <code>${DB_PASSWORD}</code>, заглядывает в среду выполнения, находит там пароль и успешно передает его контейнеру. Никаких временных файлов на диске не создается, что намного безопаснее!
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 5: ПРОВЕРКА И ЛОГИРОВАНИЕ</h2>
+        <p>Пора проверить, всё ли мы сделали правильно и надежно ли GitHub скрывает наши данные.</p>
+        
+        <ol>
+            <li>Закоммитьте изменения в конфигурационных файлах и пайплайне, и сделайте пуш в репозиторий.</li>
+            <li>Откройте вкладку <strong>Actions</strong> в вашем репозитории на GitHub.</li>
+            <li>Нажмите на запущенный процесс и перейдите к логам выполнения задач.</li>
+            <li>Убедитесь, что база данных поднимается и тесты проходят успешно (переменные считываются корректно).</li>
+            <li><strong>Проверка маскировки:</strong> GitHub автоматически распознает использование секретов и заменяет их в логах на звездочки (<code>***</code>). Убедитесь, что в ваших логах нет открытых паролей!</li>
+        </ol>
+
+        <div class="hint">
+            <strong>ПРОМЕЖУТОЧНАЯ ПРОВЕРКА:</strong>
+            Попробуйте специально изменить пароль в GitHub Secrets на неверный и перезапустить пайплайн. Ваши тесты или запуск базы данных должны упасть с ошибкой авторизации (Access Denied / Connection Refused). Если этого не произошло — значит, ваше приложение всё ещё читает пароль откуда-то из кода (захардкожен). Вернитесь к Шагу 1!
+        </div>
+
+    </div>
+</body>
+</html>

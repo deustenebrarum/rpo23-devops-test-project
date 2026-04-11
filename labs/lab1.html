@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="ru">
+    <head>
+        <meta charset="UTF-8" />
+        <title>
+            Лабораторная работа №1 - Контейнеризация приложений - Docker
+        </title>
+        <link rel="stylesheet" href="style.css" />
+    </head>
+    <body>
+        <div class="document-container">
+            <h1>ГАЙД ПО МОДУЛЮ М2: Контейнеризация TodoApp</h1>
+
+            <p>
+                <strong>Цель модуля:</strong> Упаковать наше приложение и базу
+                данных (PostgreSQL) в Docker. Итогом работы должна стать
+                инфраструктура, которая запускается одной командой:
+                <code>docker compose up --build</code>.
+            </p>
+
+            <div class="hint">
+                <strong>ОТЛИЧИЕ ЭТОЙ РАБОТЫ:</strong>
+                Мы не даем готовый код (кроме сложных платформенных
+                особенностей). Ваша задача — понять логику работы инструментов,
+                искать нужные команды в документации и осознанно применять их.
+            </div>
+
+            <hr class="separator" />
+
+            <h2>ШАГ 1: СОЗДАНИЕ DOCKERFILE (МНОГОЭТАПНАЯ СБОРКА)</h2>
+            <p>
+                <code>Dockerfile</code> — это инструкция по сборке образа
+                <strong>вашего приложения</strong> (бэкенда). Мы будем
+                использовать паттерн
+                <strong>Multi-stage build</strong> (многоэтапная сборка).
+            </p>
+            <p>
+                <em>Зачем это нужно?</em> Для сборки кода нужен тяжелый .NET SDK
+                (около 800 МБ). Но для работы готового приложения нужен только
+                легкий .NET Runtime (около 200 МБ). Мы скомпилируем код в
+                тяжелом образе, а готовый результат скопируем в чистый и легкий
+                образ.
+            </p>
+
+            <h3>Этап 1.1: Builder (Сборка)</h3>
+            <p>
+                Начните <code>Dockerfile</code> с официального образа
+                <code>.NET SDK</code>, назовите этот этап
+                <code>AS builder</code>.
+            </p>
+            <ol>
+                <li>
+                    <strong>Кэширование слоев:</strong> Сначала скопируйте
+                    <code>Directory.Packages.props</code> и
+                    <strong
+                        >только файлы проектов (<code>.csproj</code>)</strong
+                    >
+                    с сохранением структуры папок. Выполните
+                    <code>dotnet restore</code>. <br />
+                    <em>Почему так?</em> Если вы измените строчку кода, Docker
+                    не будет заново качать пакеты из интернета, так как кэш
+                    файлов <code>.csproj</code> не изменился.
+                </li>
+                <li>
+                    <strong>Компиляция:</strong> Скопируйте остальной код
+                    (<code>src/</code>) и выполните публикацию проекта (ищите
+                    команду <code>dotnet publish -c Release</code>). Укажите
+                    флаг <code>--no-restore</code>.
+                </li>
+                <li>
+                    <strong>Бандл миграций:</strong> В проекте уже есть готовый
+                    скрипт <code>scripts/make-migration-bundle.sh</code>.
+                    Скопируйте его в контейнер и запустите.<br />
+                    <strong>Важная подсказка:</strong> Чтобы утилита
+                    <code>dotnet ef</code> заработала в Linux, выполните
+                    следующие команды <em>перед</em> запуском скрипта:
+                    <pre><code>RUN dotnet tool install --global dotnet-ef
+ENV PATH="$PATH:/root/.dotnet/tools"</code></pre>
+                </li>
+                <li>
+                    <strong>Права доступа:</strong> Выполните
+                    <code>chmod +x</code> для бандла миграций и ваших скриптов,
+                    чтобы Linux разрешил их запуск.
+                </li>
+            </ol>
+            <p>
+                <strong>🔎 Что гуглить:</strong>
+                <code>Docker layer caching dotnet restore</code>
+            </p>
+            <hr class="separator" />
+
+            <h3>Этап 1.2: Runtime (Запуск)</h3>
+            <p>
+                Начните второй этап с образа <code>.NET ASP.NET Runtime</code>,
+                найдите его правильный тег в интернете.
+            </p>
+            <ol>
+                <li>
+                    Используйте команду <code>COPY --from=builder</code>, чтобы
+                    перенести в новый образ только три вещи: папку с
+                    опубликованным приложением, файл
+                    <code>EfCoreMigrationsBundle</code> и скрипт запуска (о нем
+                    в Шаге 2).
+                </li>
+                <li>Укажите порт (<code>EXPOSE</code>), например, 8080.</li>
+                <li>
+                    Укажите <code>ENTRYPOINT</code> для запуска вашего скрипта
+                    (например,
+                    <code>ENTRYPOINT ["/bin/sh", "./apply-migrations.sh"]</code
+                    >).
+                </li>
+            </ol>
+
+            <hr class="separator" />
+
+            <h2>ШАГ 2: СКРИПТ ЗАПУСКА (ENTRYPOINT)</h2>
+            <p>
+                Контейнер живет, пока работает его главный процесс. Нам нужно,
+                чтобы при старте контейнер сначала обновил БД, а потом запустил
+                само приложение.
+            </p>
+            <ol>
+                <li>Создайте файл <code>scripts/apply-migrations.sh</code>.</li>
+                <li>
+                    Напишите bash-скрипт, который сначала запускает
+                    <code>./EfCoreMigrationsBundle</code>.
+                </li>
+                <li>
+                    Затем запускает приложение:
+                    <code>exec dotnet TodoApp.Web.dll</code>.<br />
+                    <em
+                        >(Команда <code>exec</code> нужна, чтобы передать
+                        приложению контроль над процессом и оно могло правильно
+                        получать сигналы остановки от Docker).</em
+                    >
+                </li>
+            </ol>
+
+            <hr class="separator" />
+
+            <h2>ШАГ 3: НАСТРОЙКА DOCKER COMPOSE (ОРКЕСТРАЦИЯ)</h2>
+            <p>
+                Приложению нужна база данных PostgreSQL. Писать длинные команды
+                для связывания двух контейнеров вручную неудобно. Мы опишем нашу
+                инфраструктуру в файле <code>docker-compose.yml</code>.
+            </p>
+
+            <h3>Этап 3.1: Безопасность и файл .env</h3>
+            <p>
+                Хардкодить пароли в коде — грубое нарушение безопасности. Docker
+                Compose умеет читать переменные из файла
+                <code>.env</code>.
+            </p>
+            <ol>
+                <li>
+                    Создайте в корне проекта файл <code>.env</code>. Добавьте
+                    его в .gitignore
+                </li>
+                <li>
+                    Добавьте туда: <code>DB_USER=postgres</code>,
+                    <code>DB_PASSWORD=secret</code>,
+                    <code>DB_NAME=todo_db</code>.
+                </li>
+            </ol>
+
+            <h3>Этап 3.2: Сервис базы данных (db)</h3>
+            <p>
+                Создайте файл <code>docker-compose.yml</code>. Внутри блока
+                <code>services:</code> опишите первый сервис — базу данных.
+                Назовите его <code>db</code>.
+            </p>
+            <ol>
+                <li>
+                    <strong>Образ:</strong> Найдите на Docker Hub официальный
+                    образ PostgreSQL (например,
+                    <code>postgres:15-alpine</code>).
+                </li>
+                <li>
+                    <strong>Переменные (environment):</strong> База данных
+                    должна знать, какой логин/пароль создать при первом запуске.
+                    Передайте в <code>environment</code> системные переменные
+                    Postgres, подставив в них значения из вашего
+                    <code>.env</code> файла (например,
+                    <code>POSTGRES_USER: ${DB_USER}</code>).<br />
+                    <strong>🔎 Что гуглить:</strong>
+                    <code>Postgres Docker environment variables</code>
+                </li>
+                <li>
+                    <strong>Сохранение данных (volumes):</strong> При удалении
+                    контейнера данные исчезают. Примонтируйте внутреннюю папку
+                    Postgres (<code>/var/lib/postgresql/data</code>) к
+                    именованному тому (например,
+                    <code>postgres_data</code>).<br />
+                    <strong>🔎 Что гуглить:</strong>
+                    <code>Docker compose named volumes example</code>
+                </li>
+                <li>
+                    <strong>Проверка здоровья (healthcheck):</strong> База
+                    запускается несколько секунд. Добавьте проверку здоровья,
+                    чтобы бэкенд знал, когда база реально готова. Команда для
+                    проверки внутри контейнера Postgres:
+                    <code>pg_isready -U ${DB_USER} -d ${DB_NAME}</code>.<br />
+                    <strong>🔎 Что гуглить:</strong>
+                    <code>Docker compose postgres healthcheck pg_isready</code>
+                </li>
+            </ol>
+
+            <h3>Этап 3.3: Сервис бэкенда (backend)</h3>
+            <p>
+                Опишите второй сервис под названием <code>backend</code> (или
+                <code>api</code>).
+            </p>
+            <ol>
+                <li>
+                    <strong>Сборка (build):</strong> Укажите Docker-у собирать
+                    образ из текущей папки (<code>build: .</code>), где лежит
+                    ваш Dockerfile.
+                </li>
+                <li>
+                    <strong>Порты (ports):</strong> Пробросьте порт из
+                    контейнера (8080) на ваш локальный компьютер (например,
+                    <code>80:8080</code>).
+                </li>
+                <li>
+                    <strong>Строка подключения (САМАЯ ЧАСТАЯ ОШИБКА):</strong> В
+                    <code>appsettings.json</code> вы писали
+                    <code>Host=localhost</code>. В Docker так делать
+                    <strong>нельзя</strong>! Для контейнера
+                    <code>backend</code> слово <code>localhost</code> — это он
+                    сам, а не база данных.
+                    <strong
+                        >Сетевой адрес базы данных — это имя ее сервиса в
+                        compose (т.е. <code>db</code>)</strong
+                    >.<br />
+                    <em>Как решить:</em> Задайте в блоке
+                    <code>environment</code> переменную
+                    <code>ConnectionStrings__DefaultConnection</code> (два
+                    подчеркивания заменяют двоеточие). Соберите строку
+                    подключения, используя <code>Host=db</code> и переменные из
+                    вашего файла <code>.env</code> (<code>${DB_USER}</code>,
+                    <code>${DB_PASSWORD}</code> и т.д.).<br />
+                    <strong>🔎 Что гуглить:</strong>
+                    <code
+                        >ASP.NET Core environment variables connection
+                        string</code
+                    >
+                </li>
+                <li>
+                    <strong>Зависимости (depends_on):</strong> Укажите, что
+                    <code>backend</code> зависит от <code>db</code>. Обязательно
+                    добавьте условие (<code>condition: service_healthy</code>),
+                    чтобы бэкенд начал запуск (и накатывание миграций) только
+                    тогда, когда <code>db</code> пройдет свой healthcheck.
+                </li>
+            </ol>
+
+            <hr class="separator" />
+
+            <h2>ШАГ 4: ЗАПУСК И ПРОВЕРКА</h2>
+            <p>
+                Откройте терминал в корне проекта и выполните команду сборки и
+                запуска.
+            </p>
+            <pre><code>docker compose up --build</code></pre>
+            <div class="hint">
+                <strong>Как проверить результат:</strong> Дождитесь, пока в
+                консоли появятся логи об успешном применении миграций и старте
+                сервера. Откройте браузер и перейдите на
+                <code>http://localhost/swagger</code> (или тот порт, который вы
+                указали в настройках).
+            </div>
+
+            <hr class="separator" />
+
+            <h2>🔥 СЕКРЕТНЫЙ БОСС: ОТЛАДКА ЧАСТЫХ ОШИБОК</h2>
+            <p>
+                Если вы всё сделали правильно, но контейнер бэкенда моментально
+                падает, внимательно изучите логи.
+            </p>
+
+            <p>
+                🔴 <strong>Ошибка в логах:</strong>
+                <code>exec format error</code> или
+                <code>syntax error: unexpected end of file</code>.
+            </p>
+            <p>
+                <strong>Причина (Невидимый враг):</strong> Контейнеры работают
+                на Linux. В Linux окончание строк — это символ
+                <code>LF</code> (<code>\n</code>). Если вы создали файл
+                <code>apply-migrations.sh</code> в Windows, он сохранился с
+                окончанием <code>CRLF</code> (<code>\r\n</code>). Linux
+                "спотыкается" о невидимый символ <code>\r</code> и падает.
+            </p>
+            <p><strong>Как решить навсегда:</strong></p>
+            <ol>
+                <li>
+                    Создайте файл <code>.editorconfig</code> в корне проекта,
+                    чтобы IDE создавала файлы правильно:
+                    <pre><code>root = true
+[*]
+end_of_line = lf
+insert_final_newline = true</code></pre>
+                </li>
+                <li>
+                    Создайте файл <code>.gitattributes</code>, чтобы Git всегда
+                    скачивал файлы в LF:
+                    <pre><code>* text eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf</code></pre>
+                </li>
+                <li>
+                    <strong>Важно:</strong> Выполните в терминале команды,
+                    которые заставят Git найти старые сломанные файлы и
+                    автоматически заменить в них <code>CRLF</code> на
+                    <code>LF</code>:
+                    <pre><code>git add --renormalize .
+git commit -m "Normalize line endings to LF"</code></pre>
+                </li>
+                <li>
+                    Пересоберите проект:
+                    <code>docker compose build --no-cache</code>.
+                </li>
+            </ol>
+
+            <br />
+
+            <p>
+                🔴 <strong>Ошибка:</strong> <code>Connection Refused</code> при
+                попытке подключения к БД.
+            </p>
+            <p><strong>Причина:</strong> Ваш бэкенд не видит базу.</p>
+            <p>
+                <strong>Решение:</strong> Проверьте
+                <code>docker-compose.yml</code>. Убедитесь, что:
+            </p>
+            <ol>
+                <li>
+                    Вы передали правильную переменную
+                    <code>ConnectionStrings__DefaultConnection</code>.
+                </li>
+                <li>
+                    В строке подключения написано <code>Host=db</code> (или то
+                    имя, которое вы дали сервису БД).
+                </li>
+                <li>
+                    Переменные в <code>.env</code> полностью совпадают с теми,
+                    что требует образ Postgres.
+                </li>
+            </ol>
+        </div>
+    </body>
+</html>
