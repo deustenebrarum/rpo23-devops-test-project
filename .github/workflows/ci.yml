@@ -1,0 +1,51 @@
+name: Continuous Integration
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Restore dependencies
+        run: dotnet restore TodoApp.slnx
+
+      - name: Build solution
+        run: dotnet build TodoApp.slnx --configuration Release --no-restore
+
+      - name: Run tests
+        run: dotnet test TodoApp.slnx --configuration Release --no-build
+        env:
+          JWT_KEY: ${{ secrets.JWT_SECRET_KEY }}
+
+  compose-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Start Docker Compose
+        run: docker compose up -d --build
+        env:
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_NAME: ${{ secrets.DB_NAME }}
+          JWT_KEY: ${{ secrets.JWT_SECRET_KEY }}
+
+      - name: Check running containers
+        run: docker compose ps
+
+      - name: Stop Docker Compose
+        if: always()
+        run: docker compose down -v
