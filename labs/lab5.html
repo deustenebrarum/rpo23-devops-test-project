@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>Лабораторная работа: Observability для TodoApp</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="document-container">
+        <h1>ГАЙД ПО МОДУЛЮ М7: Мониторинг, логи и трассировка TodoApp</h1>
+
+        <p><strong>Цель работы:</strong> собрать для TodoApp полноценный observability-стенд, в котором метрики идут в <code>Prometheus</code>, логи попадают в <code>Loki</code> через <code>Promtail</code>, а трейсы отправляются в <code>Tempo</code>. Поверх этих источников будет работать <code>Grafana</code>, где вы увидите все три сигнала в одном интерфейсе.</p>
+
+        <div class="hint">
+            <strong>ЗАЧЕМ НАМ ТРИ РАЗНЫХ ТИПА НАБЛЮДЕНИЯ?</strong>
+            Метрики отвечают на вопрос <em>"что деградирует и насколько быстро"</em>. Логи помогают понять <em>"что именно произошло"</em>. Трейсы показывают <em>"как запрос прошел через приложение по шагам"</em>. Grafana не заменяет эти системы: она только удобно собирает данные из специализированных источников.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 1: СОБЕРИТЕ КАРТУ СТЕКА ПЕРЕД НАСТРОЙКОЙ</h2>
+        <p>Сначала нужно понять роли компонентов. Если пропустить этот шаг, дальше легко начать копировать конфигурации вслепую и потерять смысл каждого сервиса.</p>
+
+        <div class="hint">
+            <strong>Вопросы перед действием</strong>
+            Почему Grafana не заменяет Prometheus, Loki и Tempo? Почему Loki сам по себе не умеет "забирать" логи из контейнеров без Promtail? Почему запущенный Tempo еще не означает, что в нем появятся трейсы?
+        </div>
+
+        <p><strong>Конкретное действие:</strong> перед правками составьте для себя короткую карту: кто собирает, кто хранит, кто визуализирует. Зафиксируйте минимум по одной функции на каждый сервис.</p>
+
+<pre><code>db         -> PostgreSQL с данными приложения
+backend    -> ASP.NET Core API TodoApp
+prometheus -> забирает метрики у backend по /metrics
+loki       -> хранит логи
+promtail   -> читает docker logs и отправляет их в Loki
+tempo      -> принимает и хранит трейсы
+grafana    -> показывает метрики, логи и трейсы в одном UI</code></pre>
+
+        <div class="hint">
+            <strong>Как проверить результат</strong>
+            Вы должны уметь устно объяснить путь каждого сигнала: метрики идут напрямую из приложения в Prometheus, логи идут из stdout контейнера через Promtail в Loki, трейсы идут из приложения по OTLP в Tempo.
+        </div>
+
+        <div class="hint">
+            <strong>Типичная ошибка</strong>
+            Считать, что Grafana "собирает" телеметрию сама. Нет: без корректно настроенных источников данных в Grafana просто будет красивый, но пустой интерфейс.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 2: РАСШИРЬТЕ DOCKER COMPOSE ДО ПОЛНОГО OBSERVABILITY-СТЕНДА</h2>
+        <p>Теперь нужно превратить ваш текущий compose-файл из набора <code>db + backend</code> в единый стенд наблюдаемости, который можно поднять одной командой.</p>
+
+        <div class="hint">
+            <strong>Вопросы перед действием</strong>
+            Какие сервисы должны стартовать вместе с приложением? Какие порты нужно открыть на хосте для проверки через браузер? К каким сервисам приложение должно обращаться по именам Docker-сервисов, а не через <code>localhost</code>?
+        </div>
+
+        <p><strong>Конкретное действие:</strong> обновите <code>docker-compose.yml</code>, оставьте существующие <code>db</code> и <code>backend</code>, затем добавьте <code>prometheus</code>, <code>loki</code>, <code>promtail</code>, <code>tempo</code> и <code>grafana</code>. Используйте стабильные pinned image tags и смонтируйте конфиги из репозитория.</p>
+
+<pre><code>services:
+  db:
+    image: postgres:16-alpine
+
+  backend:
+    build: .
+    ports:
+      - "5000:8080"
+    environment:
+      - OpenTelemetry__ServiceName=TodoApp.Web
+      - OpenTelemetry__Otlp__Endpoint=http://tempo:4317
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    ports:
+      - "9090:9090"
+
+  loki:
+    image: grafana/loki:3.1.1
+    ports:
+      - "3100:3100"
+
+  promtail:
+    image: grafana/promtail:3.1.1
+
+  tempo:
+    image: grafana/tempo:2.6.1
+    ports:
+      - "3200:3200"
+      - "4317:4317"
+
+  grafana:
+    image: grafana/grafana-oss:11.1.4
+    ports:
+      - "3000:3000"</code></pre>
+
+        <div class="hint">
+            <strong>Как проверить результат</strong>
+            В compose-файле должны появиться все семь сервисов: <code>db</code>, <code>backend</code>, <code>prometheus</code>, <code>loki</code>, <code>promtail</code>, <code>tempo</code>, <code>grafana</code>. Убедитесь, что backend отправляет трейсы в <code>tempo:4317</code>, а не в <code>localhost:4317</code> внутри контейнера.
+        </div>
+
+        <div class="hint">
+            <strong>Типичная ошибка</strong>
+            Использовать <code>localhost</code> для связи контейнеров между собой. Внутри Docker Compose <code>localhost</code> указывает на текущий контейнер, а не на соседний сервис.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 3: ПОДГОТОВЬТЕ КОНФИГИ ДЛЯ PROMETHEUS, LOKI, PROMTAIL, TEMPO И GRAFANA</h2>
+        <p>Сервисы observability лучше настраивать отдельными файлами в репозитории. Так конфигурация будет воспроизводимой, проверяемой и одинаковой у всей команды.</p>
+
+        <div class="hint">
+            <strong>Вопросы перед действием</strong>
+            Как Prometheus поймет, откуда забирать метрики? Как Promtail свяжет контейнер Docker с файлом логов? Почему datasource provisioning в Grafana удобнее ручного добавления через UI?
+        </div>
+
+        <p><strong>Конкретное действие:</strong> создайте дерево <code>observability/</code> и добавьте конфиги для каждого сервиса. Важно, чтобы они ссылались на имена docker-сервисов: <code>backend</code>, <code>loki</code>, <code>prometheus</code>, <code>tempo</code>.</p>
+
+<pre><code>observability/
+  prometheus/prometheus.yml
+  loki/loki-config.yml
+  promtail/promtail-config.yml
+  tempo/tempo.yml
+  grafana/provisioning/datasources/datasources.yml</code></pre>
+
+<pre><code># prometheus.yml
+scrape_configs:
+  - job_name: todoapp-backend
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["backend:8080"]
+
+# promtail-config.yml
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+# datasources.yml
+datasources:
+  - name: Prometheus
+    url: http://prometheus:9090
+  - name: Loki
+    url: http://loki:3100
+  - name: Tempo
+    url: http://tempo:3200</code></pre>
+
+        <div class="hint">
+            <strong>Как проверить результат</strong>
+            В <code>prometheus.yml</code> должен быть target <code>backend:8080</code> и путь <code>/metrics</code>. В Grafana datasource-файл должен описывать три источника данных, чтобы после старта они появились автоматически без ручной настройки.
+        </div>
+
+        <div class="hint">
+            <strong>Типичная ошибка</strong>
+            Создать конфиг-файлы, но забыть смонтировать их в <code>docker-compose.yml</code>. В результате контейнер поднимается с дефолтной конфигурацией, и вы отлаживаете "не тот" стенд.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 4: ПОДГОТОВЬТЕ TODOAPP К МЕТРИКАМ И ТРЕЙСАМ</h2>
+        <p>Prometheus не создает метрики магически, а Tempo не получает трейсы сам по себе. Приложение должно быть явно инструментировано.</p>
+
+        <div class="hint">
+            <strong>Вопросы перед действием</strong>
+            Какие NuGet-пакеты нужны для OpenTelemetry? Какие данные можно получить автоматически из ASP.NET Core? Почему для метрик нужен endpoint <code>/metrics</code>, а для трейсов нужен OTLP exporter?
+        </div>
+
+        <p><strong>Конкретное действие:</strong> добавьте OpenTelemetry-пакеты в проект, настройте общий resource с именем сервиса, включите ASP.NET Core и HttpClient instrumentation, откройте endpoint <code>/metrics</code> и настройте отправку трейсов в Tempo.</p>
+
+<pre><code>builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource =&gt; resource.AddService(serviceName))
+    .WithMetrics(metrics =&gt; metrics
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddRuntimeInstrumentation()
+        .AddPrometheusExporter())
+    .WithTracing(tracing =&gt; tracing
+        .AddAspNetCoreInstrumentation()
+        .AddHttpClientInstrumentation()
+        .AddOtlpExporter(options =&gt;
+        {
+            options.Endpoint = new Uri(otlpEndpoint);
+        }));
+
+app.MapPrometheusScrapingEndpoint("/metrics");</code></pre>
+
+        <div class="hint">
+            <strong>Как проверить результат</strong>
+            После сборки приложения у вас должен существовать маршрут <code>/metrics</code>. В конфигурации приложения должны быть параметры вроде <code>OpenTelemetry:ServiceName</code> и <code>OpenTelemetry:Otlp:Endpoint</code>. Serilog при этом должен остаться включенным, потому что именно stdout контейнера будет источником логов для Promtail.
+        </div>
+
+        <div class="hint">
+            <strong>Типичная ошибка</strong>
+            Удалить существующее логирование, думая, что OpenTelemetry полностью его заменяет. В этой лабораторной логи остаются в stdout, а Promtail уже читает их и отправляет в Loki.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 5: ПОДНИМИТЕ СТЕК И ПРОВЕРЬТЕ, ЧТО ВСЕ СЕРВИСЫ ЖИВЫ</h2>
+        <p>После конфигурирования нужно проверить не только факт запуска, но и то, что сервисы поднялись без скрытых ошибок конфигурации.</p>
+
+        <div class="hint">
+            <strong>Вопросы перед действием</strong>
+            Какие контейнеры должны быть в состоянии <code>Up</code>? Какие URL вы будете открывать первыми для быстрой проверки? Что делать, если один контейнер постоянно перезапускается?
+        </div>
+
+        <p><strong>Конкретное действие:</strong> из корня проекта выполните полную пересборку и запуск стенда.</p>
+
+<pre><code>docker compose up -d --build
+docker ps</code></pre>
+
+        <p>После запуска откройте:</p>
+        <ul>
+            <li><code>http://localhost:5000/swagger</code> для API;</li>
+            <li><code>http://localhost:3000</code> для Grafana;</li>
+            <li><code>http://localhost:9090/targets</code> для Prometheus;</li>
+            <li><code>http://localhost:3200</code> для Tempo.</li>
+        </ul>
+
+        <div class="hint">
+            <strong>Как проверить результат</strong>
+            В выводе <code>docker ps</code> должны быть видны контейнеры <code>todoapp-db</code>, <code>todoapp-backend</code>, <code>todoapp-prometheus</code>, <code>todoapp-loki</code>, <code>todoapp-promtail</code>, <code>todoapp-tempo</code> и <code>todoapp-grafana</code>. В Prometheus target для backend должен перейти в состояние <code>UP</code>.
+        </div>
+
+        <div class="hint">
+            <strong>Типичная ошибка</strong>
+            Проверять только наличие контейнера в списке, но не смотреть его логи. Контейнер может существовать и одновременно бесконечно падать из-за неверного пути к конфигу или неправильного порта.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 6: СОЗДАЙТЕ ТЕСТОВУЮ НАГРУЗКУ, ЧТОБЫ ПОЯВИЛИСЬ ДАННЫЕ</h2>
+        <p>Пустая система наблюдаемости почти всегда выглядит как "ничего не работает". На самом деле ей просто не хватает событий. Нужно создать нагрузку вручную.</p>
+
+        <div class="hint">
+            <strong>Вопросы перед действием</strong>
+            Какие запросы лучше отправить, чтобы появились и успешные, и ошибочные сценарии? Почему после старта системы данные не появляются мгновенно во всех источниках?
+        </div>
+
+        <p><strong>Конкретное действие:</strong> откройте Swagger и выполните несколько запросов подряд. Полезно сделать комбинацию из чтения списка задач, создания задачи и одного невалидного запроса, чтобы в логах и трейсах были разные сценарии.</p>
+
+<pre><code>Пример последовательности:
+1. GET /api/todos
+2. POST /api/todos с валидным телом
+3. GET /api/todos
+4. POST /api/todos с некорректным телом или без токена
+5. Повторить 2-3 раза</code></pre>
+
+        <div class="hint">
+            <strong>Как проверить результат</strong>
+            После серии запросов у backend должны обновиться счетчики HTTP-запросов, в Loki должны появиться строки логов, а в Tempo должны появиться новые trace/span записи. Если данных нет, сначала убедитесь, что вы действительно отправили несколько HTTP-запросов после старта контейнеров.
+        </div>
+
+        <div class="hint">
+            <strong>Типичная ошибка</strong>
+            Открыть только Swagger UI и не выполнить ни одного endpoint. Само открытие страницы даст слишком мало данных, чтобы уверенно проверить весь pipeline.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 7: ПРОВЕРЬТЕ МЕТРИКИ В PROMETHEUS</h2>
+        <p>Метрики обычно дают первый сигнал о проблеме. Здесь ваша цель — убедиться, что приложение действительно публикует метрики, а Prometheus их реально забирает.</p>
+
+        <div class="hint">
+            <strong>Вопросы перед действием</strong>
+            Почему target может быть <code>DOWN</code>, даже если backend отвечает в браузере? Что означает путь <code>/metrics</code> и кто его обслуживает: ваш контроллер или middleware/exporter?
+        </div>
+
+        <p><strong>Конкретное действие:</strong> зайдите в <code>Prometheus</code>, откройте <code>Status -&gt; Targets</code>, затем выполните простой запрос в интерфейсе Prometheus, например по числу HTTP-запросов.</p>
+
+<pre><code>http_server_request_duration_seconds_count
+
+или
+
+http_server_active_requests</code></pre>
+
+        <div class="hint">
+            <strong>Как проверить результат</strong>
+            Target <code>todoapp-backend</code> должен быть <code>UP</code>. Метрики должны возвращать значения, а не пустой список. Если открыть <code>http://localhost:5000/metrics</code> напрямую, вы должны увидеть текстовый поток метрик.
+        </div>
+
+        <div class="hint">
+            <strong>Типичная ошибка</strong>
+            Ожидать пользовательские бизнес-метрики, хотя вы настроили только базовую автоматическую instrumentation. В этой работе достаточно системных и HTTP-метрик, которые появляются автоматически.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 8: ПРОВЕРЬТЕ ЛОГИ В LOKI И GRAFANA</h2>
+        <p>Логи нужны, чтобы быстро увидеть конкретные сообщения приложения и контекст ошибки. Здесь мы проверяем полный путь: контейнер -> Promtail -> Loki -> Grafana.</p>
+
+        <div class="hint">
+            <strong>Вопросы перед действием</strong>
+            Почему Loki не читает stdout контейнеров напрямую? Какие label-поля помогут отличить backend от остальных контейнеров? Как понять, что проблема именно в Promtail, а не в Loki?
+        </div>
+
+        <p><strong>Конкретное действие:</strong> откройте Grafana, перейдите в <code>Explore</code>, выберите datasource <code>Loki</code> и найдите логи backend по label контейнера или compose-сервиса.</p>
+
+<pre><code>{container="todoapp-backend"}
+
+или
+
+{compose_service="backend"}</code></pre>
+
+        <div class="hint">
+            <strong>Как проверить результат</strong>
+            В Grafana должны появиться строки логов от ASP.NET Core/Serilog после ваших запросов. Если видны логи только от инфраструктурных контейнеров, значит backend либо не пишет в stdout, либо Promtail не собирает нужный контейнер.
+        </div>
+
+        <div class="hint">
+            <strong>Типичная ошибка</strong>
+            Искать логи сразу по слишком узкому запросу и решить, что логов нет. Сначала попробуйте более широкий фильтр по контейнеру, а уже потом сужайте поиск.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 9: ПРОВЕРЬТЕ ТРЕЙСЫ В TEMPO И GRAFANA</h2>
+        <p>Трейсы особенно полезны, когда нужно восстановить путь запроса и понять, где именно возникла задержка или ошибка.</p>
+
+        <div class="hint">
+            <strong>Вопросы перед действием</strong>
+            Почему поднятый Tempo может оставаться пустым? Какие действия в приложении создают новые spans автоматически? Почему после первого запуска иногда нужно подождать несколько секунд, прежде чем trace станет видимым?
+        </div>
+
+        <p><strong>Конкретное действие:</strong> в Grafana откройте datasource <code>Tempo</code> через <code>Explore</code>, выберите сервис <code>TodoApp.Web</code> и найдите недавние traces после серии запросов в Swagger.</p>
+
+<pre><code>Service name: TodoApp.Web
+Lookback: Last 15 minutes
+Query type: Search</code></pre>
+
+        <div class="hint">
+            <strong>Как проверить результат</strong>
+            Вы должны увидеть хотя бы один trace со span-ами HTTP-запроса. При открытии trace должны быть видны длительность, статус и дочерние операции. Если trace не появляется, проверьте endpoint OTLP в backend и receiver OTLP в Tempo.
+        </div>
+
+        <div class="hint">
+            <strong>Типичная ошибка</strong>
+            Смотреть только веб-страницу Tempo и не проверять настройку экспортера в самом приложении. Tempo может быть полностью исправен, но пуст, если backend никуда не отправляет трейсы.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ШАГ 10: СОБЕРИТЕ ВСЕ ТРИ СИГНАЛА В GRAFANA</h2>
+        <p>Последний шаг нужен, чтобы увидеть observability как единую систему, а не как три несвязанных проверки.</p>
+
+        <div class="hint">
+            <strong>Вопросы перед действием</strong>
+            С какого сигнала вы начнете расследование инцидента: с метрик, логов или трейсов? Почему это зависит от симптома? Как связать сигнал "высокая задержка" с конкретным trace и затем с логами?
+        </div>
+
+        <p><strong>Конкретное действие:</strong> проверьте в Grafana, что все три datasource доступны, затем сравните результаты: сначала найдите всплеск или изменение в метриках, после этого откройте логи backend, а затем trace недавнего запроса.</p>
+
+<pre><code>Порядок ручной проверки:
+1. Prometheus datasource -> метрики backend
+2. Loki datasource -> логи backend
+3. Tempo datasource -> traces сервиса TodoApp.Web
+4. Сопоставьте время события во всех трех сигналах</code></pre>
+
+        <div class="hint">
+            <strong>Как проверить результат</strong>
+            В разделе <code>Connections</code> или <code>Data sources</code> Grafana все три источника должны быть в статусе <em>working</em>. Вы должны уметь показать преподавателю один и тот же период времени через метрики, логи и trace.
+        </div>
+
+        <div class="hint">
+            <strong>Типичная ошибка</strong>
+            Проверить каждый инструмент отдельно, но не попытаться связать их по времени и по сервису. Настоящая ценность observability появляется именно в совместном использовании сигналов.
+        </div>
+
+        <hr class="separator">
+
+        <h2>ЧТО СДАВАТЬ</h2>
+        <p>Подготовьте один архив, PDF или отчет со скриншотами и ссылкой на репозиторий/коммит. В доказательствах должно быть видно, что стенд не только собран, но и реально получает данные.</p>
+
+        <ol>
+            <li>Скриншот вывода <code>docker ps</code> со всеми контейнерами observability-стека.</li>
+            <li>Скриншот страницы datasource-источников в Grafana.</li>
+            <li>Скриншот <code>Prometheus Targets</code>, где target backend имеет статус <code>UP</code>.</li>
+            <li>Скриншот логов backend в Loki/Grafana.</li>
+            <li>Скриншот одного trace в Tempo или Grafana.</li>
+            <li>Ссылка на репозиторий или конкретный commit, где находится решение.</li>
+        </ol>
+
+        <hr class="separator">
+
+        <h2>КОНТРОЛЬНЫЕ ВОПРОСЫ</h2>
+        <ol>
+            <li>Почему Grafana не заменяет Prometheus, Loki и Tempo?</li>
+            <li>Почему Prometheus не сможет показать метрики приложения, если в приложении не настроен endpoint <code>/metrics</code>?</li>
+            <li>Зачем между Docker-контейнерами и Loki нужен Promtail?</li>
+            <li>Почему наличие работающего Tempo не гарантирует наличие traces?</li>
+            <li>В каком случае расследование лучше начинать с метрик, а в каком — с логов или traces?</li>
+        </ol>
+
+        <hr class="separator">
+
+        <h2>ЧАСТЫЕ ОШИБКИ И ДИАГНОСТИКА</h2>
+        <ul>
+            <li><strong>Prometheus target DOWN:</strong> проверьте путь <code>/metrics</code>, порт backend и имя target <code>backend:8080</code>.</li>
+            <li><strong>Нет логов в Loki:</strong> проверьте, что Promtail смонтировал <code>/var/lib/docker/containers</code> и <code>/var/run/docker.sock</code>, а backend действительно пишет в stdout.</li>
+            <li><strong>Нет traces в Tempo:</strong> проверьте <code>OpenTelemetry__Otlp__Endpoint=http://tempo:4317</code> и наличие OTLP receiver в <code>tempo.yml</code>.</li>
+            <li><strong>Grafana пустая после старта:</strong> убедитесь, что provisioning-файл datasource смонтирован в правильную директорию.</li>
+            <li><strong>Данные появились не сразу:</strong> повторите несколько HTTP-запросов и дайте системе 10-30 секунд на сбор и индексацию.</li>
+        </ul>
+    </div>
+</body>
+</html>
