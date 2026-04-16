@@ -11,6 +11,8 @@ efbundle
 .env
 
 # User-specific files
+tmp/
+.serena/
 *.rsuser
 *.suo
 *.user
